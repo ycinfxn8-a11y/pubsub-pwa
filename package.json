@@ -9,8 +9,7 @@
   },
   "dependencies": {
     "@novu/js": "^3.14.1",
-    "appwrite": "^23.0.0",
-    "canvas": "^3.2.1"
+    "appwrite": "^23.0.0"
   },
   "devDependencies": {
     "node-appwrite": "^22.1.3",
