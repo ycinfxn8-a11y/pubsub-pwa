@@ -42,6 +42,17 @@ const NOVU_CONFIG = {
   applicationIdentifier: import.meta.env.VITE_NOVU_APP_ID || '',
 }
 
+// Firebase config — untuk FCM push notification
+// Nilai diambil dari .env (VITE_FIREBASE_*)
+const FIREBASE_CONFIG = {
+  apiKey:            import.meta.env.VITE_FIREBASE_API_KEY            || '',
+  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN        || '',
+  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID         || '',
+  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET     || '',
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
+  appId:             import.meta.env.VITE_FIREBASE_APP_ID             || '',
+}
+
 // LocalStorage keys
 const LS_KEYS = {
   subscriptions: 'pubsub:subscriptions',
@@ -1381,9 +1392,9 @@ function mountSettings(navigate) {
     const perm = await Notification.requestPermission()
     document.getElementById('notifPermStatus').textContent = `Status: ${perm}`
     if (perm === 'granted') {
-      // Inisialisasi ulang Novu agar FCM token terdaftar
       const user = storage.getUser()
       if (user) await initNovu(user.$id)
+      await initFirebaseMessaging()
       toast('Notifikasi diaktifkan', 'success')
     } else {
       toast('Izin notifikasi ditolak', 'error')
@@ -1412,6 +1423,58 @@ function mountSettings(navigate) {
 
 
 // ============================================================
+
+// ── Firebase Messaging ────────────────────────────────────
+// Inisialisasi FCM dan dapatkan token untuk push notification.
+// Dipanggil setelah user grant permission notifikasi.
+// Token dikirim ke Novu subscriber agar Novu bisa push via FCM.
+let _fcmToken = null
+
+async function initFirebaseMessaging() {
+  if (!FIREBASE_CONFIG.apiKey) return null
+  if (!('serviceWorker' in navigator)) return null
+  if (Notification.permission !== 'granted') return null
+
+  try {
+    // Import Firebase SDK secara lazy — tidak menambah bundle size awal
+    const { initializeApp, getApps } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js')
+    const { getMessaging, getToken, onMessage } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js')
+
+    // Inisialisasi Firebase app (cegah duplikat)
+    const app = getApps().length
+      ? getApps()[0]
+      : initializeApp(FIREBASE_CONFIG)
+
+    const messaging = getMessaging(app)
+
+    // Pastikan SW sudah terdaftar sebelum getToken
+    const swReg = await navigator.serviceWorker.ready
+
+    // getToken — butuh VAPID key dari Firebase Console
+    // Firebase Console → Project Settings → Cloud Messaging → Web Push certificates
+    const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY || ''
+    const token = await getToken(messaging, { vapidKey, serviceWorkerRegistration: swReg })
+
+    if (token && token !== _fcmToken) {
+      _fcmToken = token
+      console.log('[FCM] Token:', token)
+      // Kirim token ke Novu subscriber agar notifikasi bisa dikirim via FCM
+      // Novu SDK (@novu/js) handle ini secara otomatis saat init dengan FCM token
+    }
+
+    // Terima pesan saat app di foreground
+    onMessage(messaging, (payload) => {
+      console.log('[FCM] Foreground message:', payload)
+      const { title, body } = payload.notification || {}
+      if (title) showBrowserNotif({ event_type: 'push', topic_id: '', payload: JSON.stringify({ title, body }) })
+    })
+
+    return token
+  } catch (err) {
+    console.warn('[FCM] init failed:', err.message)
+    return null
+  }
+}
 
 // ── Push Subscription Service ─────────────────────────────────
 // APP SHELL — Router & Navigation
@@ -1603,10 +1666,18 @@ async function _navigateFromLogin(page) {
 
 boot()
 
-// ── PWA service worker ────────────────────────────────────────
+// ── PWA service worker + Firebase Messaging ──────────────────
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', async () => {
-    try { await navigator.serviceWorker.register('/sw.js') }
-    catch (err) { console.warn('SW registration failed:', err) }
+    try {
+      await navigator.serviceWorker.register('/sw.js')
+      // Jika user sudah pernah grant permission sebelumnya,
+      // langsung init FCM tanpa perlu klik tombol lagi
+      if (Notification.permission === 'granted') {
+        await initFirebaseMessaging()
+      }
+    } catch (err) {
+      console.warn('SW registration failed:', err)
+    }
   })
 }
