@@ -517,29 +517,58 @@ async function _registerFcmTokenToNovu(token) {
 }
 
 async function initFirebaseMessaging() {
-  if (!FIREBASE_CONFIG.apiKey) return null
-  if (!('serviceWorker' in navigator)) return null
-  if (Notification.permission !== 'granted') return null
+  if (!FIREBASE_CONFIG.apiKey) {
+    console.warn('[FCM] FIREBASE_CONFIG.apiKey kosong — cek VITE_FIREBASE_API_KEY di .env')
+    return null
+  }
+  if (!('serviceWorker' in navigator)) {
+    console.warn('[FCM] Service Worker tidak tersedia')
+    return null
+  }
+  if (Notification.permission !== 'granted') {
+    console.warn('[FCM] Permission belum granted:', Notification.permission)
+    return null
+  }
+
   try {
     const { initializeApp, getApps } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js')
     const { getMessaging, getToken, onMessage } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js')
+
     const app = getApps().length ? getApps()[0] : initializeApp(FIREBASE_CONFIG)
     const messaging = getMessaging(app)
     const swReg = await navigator.serviceWorker.ready
+
     const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY || ''
-    const token = await getToken(messaging, { vapidKey, serviceWorkerRegistration: swReg })
-    if (token && token !== _fcmToken) {
-      _fcmToken = token
-      console.log('[FCM] Token:', token)
-      await _registerFcmTokenToNovu(token)
+    if (!vapidKey) {
+      console.warn('[FCM] VITE_FIREBASE_VAPID_KEY kosong — getToken akan gagal')
     }
+
+    console.log('[FCM] Memanggil getToken...')
+    const token = await getToken(messaging, { vapidKey, serviceWorkerRegistration: swReg })
+
+    if (!token) {
+      console.warn('[FCM] getToken mengembalikan null/empty — cek VAPID key dan Firebase project config')
+      return null
+    }
+
+    if (token !== _fcmToken) {
+      _fcmToken = token
+      console.log('[FCM] Token baru didapat, dikirim ke Novu...')
+      await _registerFcmTokenToNovu(token)
+    } else {
+      console.log('[FCM] Token sama, skip register')
+    }
+
+    // Terima push saat app di foreground
     onMessage(messaging, (payload) => {
+      console.log('[FCM] Foreground message:', payload)
       const { title, body } = payload.notification || {}
       if (title) showBrowserNotif({ event_type: 'push', topic_id: '', payload: JSON.stringify({ title, body }) })
     })
-    return token
+
+    return _fcmToken
   } catch (err) {
-    console.warn('[FCM] init failed:', err.message)
+    console.warn('[FCM] init failed:', err.message, err)
     return null
   }
 }
@@ -550,9 +579,12 @@ const subscribeService = {
     const user = storage.getUser()
 
     // 1. Pastikan FCM token sudah ada sebelum subscribe ke Novu
-    //    Jika belum ada (belum init), coba init dulu
+    console.log('[subscribe] _fcmToken saat ini:', _fcmToken ? _fcmToken.slice(0, 20) + '...' : 'null')
+    console.log('[subscribe] Notification.permission:', Notification.permission)
     if (!_fcmToken && Notification.permission === 'granted') {
+      console.log('[subscribe] FCM token belum ada, init Firebase dulu...')
       await initFirebaseMessaging()
+      console.log('[subscribe] Setelah init, _fcmToken:', _fcmToken ? _fcmToken.slice(0, 20) + '...' : 'masih null')
     }
 
     try {
@@ -1470,7 +1502,7 @@ function renderSettings() {
         <div class="card__body">
           <div class="stat-rows">
             <div class="stat-row"><span>Aplikasi</span><strong>PubSub PWA</strong></div>
-            <div class="stat-row"><span>Versi</span><strong>1.0.0 b101</strong></div>
+            <div class="stat-row"><span>Versi</span><strong>1.0.0 b104</strong></div>
             <div class="stat-row"><span>Backend</span><strong>Appwrite Cloud</strong></div>
             <div class="stat-row"><span>Push</span><strong>Novu</strong></div>
             <div class="stat-row"><span>Stack</span><strong>Vite + Vanilla JS</strong></div>
