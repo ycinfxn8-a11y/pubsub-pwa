@@ -491,6 +491,59 @@ const publishService = {
 }
 
 // ── Subscribe ─────────────────────────────────────────────────
+// ── Firebase Messaging ────────────────────────────────────────
+// Dideklarasikan SEBELUM subscribeService karena subscribe() memanggilnya.
+let _fcmToken = null
+
+async function _registerFcmTokenToNovu(token) {
+  try {
+    const user = storage.getUser()
+    if (!user) return
+    await _functions.createExecution(
+      APPWRITE_CONFIG.functions.novuSubscribe,
+      JSON.stringify({
+        topic_id:      '_fcm_register',
+        subscriber_id: user.$id,
+        email:         user.email || '',
+        fcm_token:     token,
+      }),
+      false, '/', 'POST',
+      { 'Content-Type': 'application/json' }
+    )
+    console.log('[FCM] Token registered to Novu:', user.$id)
+  } catch (err) {
+    console.warn('[FCM] Failed to register token:', err.message)
+  }
+}
+
+async function initFirebaseMessaging() {
+  if (!FIREBASE_CONFIG.apiKey) return null
+  if (!('serviceWorker' in navigator)) return null
+  if (Notification.permission !== 'granted') return null
+  try {
+    const { initializeApp, getApps } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js')
+    const { getMessaging, getToken, onMessage } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js')
+    const app = getApps().length ? getApps()[0] : initializeApp(FIREBASE_CONFIG)
+    const messaging = getMessaging(app)
+    const swReg = await navigator.serviceWorker.ready
+    const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY || ''
+    const token = await getToken(messaging, { vapidKey, serviceWorkerRegistration: swReg })
+    if (token && token !== _fcmToken) {
+      _fcmToken = token
+      console.log('[FCM] Token:', token)
+      await _registerFcmTokenToNovu(token)
+    }
+    onMessage(messaging, (payload) => {
+      const { title, body } = payload.notification || {}
+      if (title) showBrowserNotif({ event_type: 'push', topic_id: '', payload: JSON.stringify({ title, body }) })
+    })
+    return token
+  } catch (err) {
+    console.warn('[FCM] init failed:', err.message)
+    return null
+  }
+}
+
 const subscribeService = {
   async subscribe(topicId) {
     storage.addSubscription(topicId)
@@ -1417,7 +1470,7 @@ function renderSettings() {
         <div class="card__body">
           <div class="stat-rows">
             <div class="stat-row"><span>Aplikasi</span><strong>PubSub PWA</strong></div>
-            <div class="stat-row"><span>Versi</span><strong>1.0.0 b100</strong></div>
+            <div class="stat-row"><span>Versi</span><strong>1.0.0 b101</strong></div>
             <div class="stat-row"><span>Backend</span><strong>Appwrite Cloud</strong></div>
             <div class="stat-row"><span>Push</span><strong>Novu</strong></div>
             <div class="stat-row"><span>Stack</span><strong>Vite + Vanilla JS</strong></div>
@@ -1479,81 +1532,6 @@ function mountSettings(navigate) {
 // Inisialisasi FCM dan dapatkan token untuk push notification.
 // Dipanggil setelah user grant permission notifikasi.
 // Token dikirim ke Novu subscriber agar Novu bisa push via FCM.
-let _fcmToken = null
-
-// Daftarkan FCM token ke Novu subscriber via Appwrite Function
-// Novu menyimpan token ini sebagai push channel — diperlukan agar Push Step bisa jalan
-async function _registerFcmTokenToNovu(token) {
-  try {
-    const user = storage.getUser()
-    if (!user) return
-    await _functions.createExecution(
-      APPWRITE_CONFIG.functions.novuSubscribe,
-      JSON.stringify({
-        topic_id:      '_fcm_register',  // dummy topic, yang penting subscriber & token terdaftar
-        subscriber_id: user.$id,
-        email:         user.email || '',
-        fcm_token:     token,
-      }),
-      false, '/', 'POST',
-      { 'Content-Type': 'application/json' }
-    )
-    console.log('[FCM] Token registered to Novu subscriber:', user.$id)
-  } catch (err) {
-    console.warn('[FCM] Failed to register token to Novu:', err.message)
-  }
-}
-
-async function initFirebaseMessaging() {
-  if (!FIREBASE_CONFIG.apiKey) return null
-  if (!('serviceWorker' in navigator)) return null
-  if (Notification.permission !== 'granted') return null
-
-  try {
-    // Import Firebase SDK secara lazy — tidak menambah bundle size awal
-    const { initializeApp, getApps } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js')
-    const { getMessaging, getToken, onMessage } = await import('https://www.gstatic.com/firebasejs/10.12.0/firebase-messaging.js')
-
-    // Inisialisasi Firebase app (cegah duplikat)
-    const app = getApps().length
-      ? getApps()[0]
-      : initializeApp(FIREBASE_CONFIG)
-
-    const messaging = getMessaging(app)
-
-    // Pastikan SW sudah terdaftar sebelum getToken
-    const swReg = await navigator.serviceWorker.ready
-
-    // getToken — butuh VAPID key dari Firebase Console
-    // Firebase Console → Project Settings → Cloud Messaging → Web Push certificates
-    const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY || ''
-    const token = await getToken(messaging, { vapidKey, serviceWorkerRegistration: swReg })
-
-    console.log('[FCM] Token:', token)
-    if (token && token !== _fcmToken) {
-      _fcmToken = token
-      console.log('[FCM] Token:', token)
-
-      // Kirim FCM token ke Novu — daftarkan sebagai push channel subscriber
-      // Tanpa ini Novu tidak tahu ke mana harus kirim push (error: "Subscriber does not have a configured channel")
-      await _registerFcmTokenToNovu(token)
-    }
-
-    // Terima pesan saat app di foreground
-    onMessage(messaging, (payload) => {
-      console.log('[FCM] Foreground message:', payload)
-      const { title, body } = payload.notification || {}
-      if (title) showBrowserNotif({ event_type: 'push', topic_id: '', payload: JSON.stringify({ title, body }) })
-    })
-
-    return token
-  } catch (err) {
-    console.warn('[FCM] init failed:', err.message)
-    return null
-  }
-}
-
-// ── Push Subscription Service ─────────────────────────────────
 // APP SHELL — Router & Navigation
 // ============================================================
 
