@@ -1529,6 +1529,7 @@ async function initFirebaseMessaging() {
     const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY || ''
     const token = await getToken(messaging, { vapidKey, serviceWorkerRegistration: swReg })
 
+    console.log('[FCM] Token:', token)
     if (token && token !== _fcmToken) {
       _fcmToken = token
       console.log('[FCM] Token:', token)
