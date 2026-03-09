@@ -21,7 +21,6 @@ import { Client, Account, Databases, Functions, ID, Query } from 'appwrite'
 //   VITE_APPWRITE_FN_PUBLISH=publish-event
 //   VITE_APPWRITE_FN_NOVU_SUBSCRIBE=novu-subscribe
 //   VITE_NOVU_APP_ID=your_novu_application_identifier
-
 const APPWRITE_CONFIG = {
   endpoint:   import.meta.env.VITE_APPWRITE_ENDPOINT   || 'https://cloud.appwrite.io/v1',
   projectId:  import.meta.env.VITE_APPWRITE_PROJECT_ID || '',
@@ -1324,11 +1323,19 @@ function renderSettings() {
         <div class="card__head"><h3 class="card__title">${icons.bell} Notifikasi</h3></div>
         <div class="card__body">
           <div class="setting-row">
-            <div><strong>Push Notification Browser</strong><span id="notifPermStatus">Status: ${Notification.permission}</span></div>
+            <div>
+              <strong>Push Notification</strong>
+              <span id="notifPermStatus">Status: ${Notification.permission}</span>
+            </div>
             <button class="btn btn--primary btn--sm" id="reqNotifPerm">
               <span class="btn__icon">${icons.bell}</span> Aktifkan
             </button>
           </div>
+          <p style="font-size:12px;color:var(--text-muted);margin-top:10px;line-height:1.6">
+            Notifikasi dikirim via <strong>Novu + Firebase</strong>. 
+            Klik Aktifkan untuk memberi izin, lalu Subscribe ke topik agar notifikasi masuk 
+            saat aplikasi di background.
+          </p>
         </div>
       </div>
       <div class="card">
@@ -1373,7 +1380,14 @@ function mountSettings(navigate) {
   document.getElementById('reqNotifPerm').addEventListener('click', async () => {
     const perm = await Notification.requestPermission()
     document.getElementById('notifPermStatus').textContent = `Status: ${perm}`
-    toast(perm === 'granted' ? 'Notifikasi diaktifkan' : 'Izin ditolak', perm === 'granted' ? 'success' : 'error')
+    if (perm === 'granted') {
+      // Inisialisasi ulang Novu agar FCM token terdaftar
+      const user = storage.getUser()
+      if (user) await initNovu(user.$id)
+      toast('Notifikasi diaktifkan', 'success')
+    } else {
+      toast('Izin notifikasi ditolak', 'error')
+    }
   })
   document.getElementById('clearAllLocal').addEventListener('click', () => {
     if (!confirm('Hapus semua data lokal? Ini tidak menghapus data di server.')) return
@@ -1398,6 +1412,8 @@ function mountSettings(navigate) {
 
 
 // ============================================================
+
+// ── Push Subscription Service ─────────────────────────────────
 // APP SHELL — Router & Navigation
 // ============================================================
 
@@ -1589,7 +1605,8 @@ boot()
 
 // ── PWA service worker ────────────────────────────────────────
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/sw.js').catch(() => {})
+  window.addEventListener('load', async () => {
+    try { await navigator.serviceWorker.register('/sw.js') }
+    catch (err) { console.warn('SW registration failed:', err) }
   })
 }
