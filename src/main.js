@@ -536,11 +536,26 @@ async function initFirebaseMessaging() {
 
     const app = getApps().length ? getApps()[0] : initializeApp(FIREBASE_CONFIG)
     const messaging = getMessaging(app)
-    const swReg = await navigator.serviceWorker.ready
+
+    // Daftarkan firebase-messaging-sw.js secara eksplisit.
+    // File ini WAJIB ada di root — Firebase SDK (terutama Android Chrome)
+    // mencari SW ini untuk background push. Jika hanya pakai sw.js biasa,
+    // push di Android tidak akan muncul saat app di background.
+    let swReg
+    try {
+      swReg = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' })
+      await swReg.update()
+    } catch {
+      // Fallback ke SW yang sudah aktif
+      swReg = await navigator.serviceWorker.ready
+    }
 
     const vapidKey = import.meta.env.VITE_FIREBASE_VAPID_KEY || ''
     if (!vapidKey) {
-      console.warn('[FCM] VITE_FIREBASE_VAPID_KEY kosong — getToken akan gagal')
+      console.warn('[FCM] VITE_FIREBASE_VAPID_KEY belum diisi di .env')
+      console.warn('[FCM] Ambil dari: Firebase Console → Project Settings → Cloud Messaging → Web Push certificates → Generate key pair')
+      toast('VAPID key belum diset — cek .env (VITE_FIREBASE_VAPID_KEY)', 'error')
+      return null
     }
 
     console.log('[FCM] Memanggil getToken...')
@@ -1502,7 +1517,7 @@ function renderSettings() {
         <div class="card__body">
           <div class="stat-rows">
             <div class="stat-row"><span>Aplikasi</span><strong>PubSub PWA</strong></div>
-            <div class="stat-row"><span>Versi</span><strong>1.0.0 b105</strong></div>
+            <div class="stat-row"><span>Versi</span><strong>1.0.0 b6</strong></div>
             <div class="stat-row"><span>Backend</span><strong>Appwrite Cloud</strong></div>
             <div class="stat-row"><span>Push</span><strong>Novu</strong></div>
             <div class="stat-row"><span>Stack</span><strong>Vite + Vanilla JS</strong></div>
