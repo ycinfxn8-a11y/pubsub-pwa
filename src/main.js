@@ -1,5 +1,5 @@
 import './style.css'
-import { Client, Account, Databases, Functions, ID, Query } from 'appwrite'
+import { Client, Account, Databases, Functions, ID, Query, Permission, Role } from 'appwrite'
 
 // ============================================================
 // KONFIGURASI — dari environment variable (Vite: import.meta.env)
@@ -494,27 +494,78 @@ const publishService = {
 const subscribeService = {
   async subscribe(topicId) {
     storage.addSubscription(topicId)
-    // 1. Daftarkan subscriber ke Novu topic via Appwrite Function (server-side)
-    //    Function akan: upsert subscriber → buat topic → assign subscriber ke topic
     const user = storage.getUser()
+
+    // 1. Pastikan FCM token sudah ada sebelum subscribe ke Novu
+    //    Jika belum ada (belum init), coba init dulu
+    if (!_fcmToken && Notification.permission === 'granted') {
+      await initFirebaseMessaging()
+    }
+
     try {
+      // 2. Simpan subscription ke Appwrite DB
+      //    Sertakan $permissions agar user bisa baca document miliknya sendiri
+      //    (diperlukan karena documentSecurity: true di koleksi subscriptions)
+      await _databases.createDocument(
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.subscriptions,
+        ID.unique(),
+        {
+          topic_id:      topicId,
+          subscriber_id: user?.$id || '',
+          is_active:     true,
+        },
+        [
+          Permission.read(Role.user(user?.$id || '')),
+          Permission.delete(Role.user(user?.$id || '')),
+        ]
+      )
+    } catch (err) {
+      // Abaikan duplikat
+      if (!err.message?.includes('409')) console.warn('[subscribe] DB error:', err.message)
+    }
+
+    try {
+      // 3. Daftarkan ke Novu — sertakan fcm_token jika sudah ada
       await _functions.createExecution(
         APPWRITE_CONFIG.functions.novuSubscribe,
         JSON.stringify({
           topic_id:      topicId,
           subscriber_id: user?.$id || '',
           email:         user?.email || '',
+          fcm_token:     _fcmToken || undefined,
         }),
         false, '/', 'POST',
         { 'Content-Type': 'application/json' }
       )
-      // 2. Baru init Novu client SDK — subscriber sudah terdaftar di Novu server
+      // 4. Init Novu client SDK setelah subscriber terdaftar di server
       if (user) await initNovu(user.$id)
-    } catch { /* Novu subscribe opsional */ }
+    } catch { /* Novu opsional */ }
+
     eventBus.emit('subscription:changed')
   },
+
   async unsubscribe(topicId) {
     storage.removeSubscription(topicId)
+    // Hapus dari Appwrite DB
+    try {
+      const res = await _databases.listDocuments(
+        APPWRITE_CONFIG.databaseId,
+        APPWRITE_CONFIG.collections.subscriptions,
+        [
+          Query.equal('topic_id', topicId),
+          Query.equal('subscriber_id', storage.getUser()?.$id || ''),
+          Query.limit(1),
+        ]
+      )
+      if (res.documents.length > 0) {
+        await _databases.deleteDocument(
+          APPWRITE_CONFIG.databaseId,
+          APPWRITE_CONFIG.collections.subscriptions,
+          res.documents[0].$id
+        )
+      }
+    } catch (err) { console.warn('[unsubscribe] DB error:', err.message) }
     eventBus.emit('subscription:changed')
   },
 }
@@ -1366,7 +1417,7 @@ function renderSettings() {
         <div class="card__body">
           <div class="stat-rows">
             <div class="stat-row"><span>Aplikasi</span><strong>PubSub PWA</strong></div>
-            <div class="stat-row"><span>Versi</span><strong>1.0.0</strong></div>
+            <div class="stat-row"><span>Versi</span><strong>1.0.0 b100</strong></div>
             <div class="stat-row"><span>Backend</span><strong>Appwrite Cloud</strong></div>
             <div class="stat-row"><span>Push</span><strong>Novu</strong></div>
             <div class="stat-row"><span>Stack</span><strong>Vite + Vanilla JS</strong></div>
