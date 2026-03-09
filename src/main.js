@@ -1430,6 +1430,29 @@ function mountSettings(navigate) {
 // Token dikirim ke Novu subscriber agar Novu bisa push via FCM.
 let _fcmToken = null
 
+// Daftarkan FCM token ke Novu subscriber via Appwrite Function
+// Novu menyimpan token ini sebagai push channel — diperlukan agar Push Step bisa jalan
+async function _registerFcmTokenToNovu(token) {
+  try {
+    const user = storage.getUser()
+    if (!user) return
+    await _functions.createExecution(
+      APPWRITE_CONFIG.functions.novuSubscribe,
+      JSON.stringify({
+        topic_id:      '_fcm_register',  // dummy topic, yang penting subscriber & token terdaftar
+        subscriber_id: user.$id,
+        email:         user.email || '',
+        fcm_token:     token,
+      }),
+      false, '/', 'POST',
+      { 'Content-Type': 'application/json' }
+    )
+    console.log('[FCM] Token registered to Novu subscriber:', user.$id)
+  } catch (err) {
+    console.warn('[FCM] Failed to register token to Novu:', err.message)
+  }
+}
+
 async function initFirebaseMessaging() {
   if (!FIREBASE_CONFIG.apiKey) return null
   if (!('serviceWorker' in navigator)) return null
@@ -1458,8 +1481,10 @@ async function initFirebaseMessaging() {
     if (token && token !== _fcmToken) {
       _fcmToken = token
       console.log('[FCM] Token:', token)
-      // Kirim token ke Novu subscriber agar notifikasi bisa dikirim via FCM
-      // Novu SDK (@novu/js) handle ini secara otomatis saat init dengan FCM token
+
+      // Kirim FCM token ke Novu — daftarkan sebagai push channel subscriber
+      // Tanpa ini Novu tidak tahu ke mana harus kirim push (error: "Subscriber does not have a configured channel")
+      await _registerFcmTokenToNovu(token)
     }
 
     // Terima pesan saat app di foreground
