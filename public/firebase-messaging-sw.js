@@ -1,7 +1,6 @@
 // ============================================================
 // Firebase Messaging Service Worker
-// File ini WAJIB bernama firebase-messaging-sw.js dan berada di root.
-// Firebase SDK mencari file ini secara otomatis untuk background push.
+// Wajib bernama firebase-messaging-sw.js di root untuk Android FCM
 // ============================================================
 
 importScripts('https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js')
@@ -19,29 +18,60 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig)
 const messaging = firebase.messaging()
 
-// Background push — dipanggil saat tab tertutup / app di background
+// Parse nilai — jika string JSON, ambil field di dalamnya
+function parseField(val) {
+  if (!val) return null
+  if (typeof val !== 'string') return val
+  try {
+    const parsed = JSON.parse(val)
+    return typeof parsed === 'object' ? parsed : val
+  } catch { return val }
+}
+
 messaging.onBackgroundMessage((payload) => {
-  console.log('[FCM SW] Background message:', payload)
+  console.log('[FCM SW] Raw payload:', JSON.stringify(payload))
 
-  // Payload dari Novu bisa ada di notification atau data
-  const notification = payload.notification || {}
-  const data         = payload.data         || {}
+  const n    = payload.notification || {}
+  const data = payload.data         || {}
 
-  const title = notification.title || data.title || 'PubSub'
-  const body  = notification.body  || data.body  || ''
-  const icon  = notification.icon  || '/icons/icon.svg'
+  // data.title / data.body bisa berupa string JSON dari Novu
+  // contoh: data.title = '{"title":"judul","body":"isi"}'
+  // Coba parse dulu, lalu ambil field yang tepat
+  const parsedTitle = parseField(data.title)
+  const parsedBody  = parseField(data.body)
 
-  self.registration.showNotification(title, {
+  let title, body
+
+  if (parsedTitle && typeof parsedTitle === 'object') {
+    // Seluruh payload ternyata ada di data.title sebagai JSON object
+    title = parsedTitle.title || parsedTitle.subject || 'PubSub'
+    body  = parsedTitle.body  || parsedTitle.content || ''
+  } else if (parsedBody && typeof parsedBody === 'object') {
+    title = parsedBody.title || n.title || data.title || 'PubSub'
+    body  = parsedBody.body  || parsedBody.content   || ''
+  } else {
+    // Format normal — field terpisah
+    title = n.title || data.title || 'PubSub'
+    body  = n.body  || data.body  || ''
+  }
+
+  // Strip HTML tag jika ada
+  title = title.replace(/<[^>]*>/g, '').trim()
+  body  = body.replace(/<[^>]*>/g, '').trim()
+
+  console.log('[FCM SW] Showing notification:', title, '|', body)
+
+  return self.registration.showNotification(title, {
     body,
-    icon,
+    icon:    '/icons/icon.svg',
     badge:   '/icons/icon.svg',
     tag:     data.event_id || data.tag || String(Date.now()),
-    data:    { url: data.url || '/' },
-    renotify: false,
+    data:    { url: '/' },
+    vibrate: [200, 100, 200],
+    renotify: true,
   })
 })
 
-// Klik notifikasi → fokus / buka tab app
 self.addEventListener('notificationclick', (e) => {
   e.notification.close()
   const url = e.notification.data?.url || '/'

@@ -1517,7 +1517,7 @@ function renderSettings() {
         <div class="card__body">
           <div class="stat-rows">
             <div class="stat-row"><span>Aplikasi</span><strong>PubSub PWA</strong></div>
-            <div class="stat-row"><span>Versi</span><strong>1.0.0 b6</strong></div>
+            <div class="stat-row"><span>Versi</span><strong>1.0.0 b107</strong></div>
             <div class="stat-row"><span>Backend</span><strong>Appwrite Cloud</strong></div>
             <div class="stat-row"><span>Push</span><strong>Novu</strong></div>
             <div class="stat-row"><span>Stack</span><strong>Vite + Vanilla JS</strong></div>
